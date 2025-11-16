@@ -1,0 +1,8 @@
+1. function that called syscall is usertrap
+2. value of p->trapframe->a7 is 0xf and represents system call write
+3. prev cpu mode was user mode 0x200000022
+4. lw a0, 0(zero)
+a0
+5. bcos of load page fault
+6. pid = 1
+process name = init

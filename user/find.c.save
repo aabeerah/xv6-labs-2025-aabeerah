@@ -1,0 +1,109 @@
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/fs.h"
+#include "kernel/param.h"
+
+char* fmtname(char *path) {
+  static char buf[DIRSIZ+1];
+  char *p;
+
+  // Find first character after last slash.
+  for(p=path+strlen(path); p >= path && *p != '/'; p--)
+    ;
+  p++;
+
+  memmove(buf, p, strlen(p));
+  buf[strlen(p)] = 0;
+  return buf;
+}
+
+void
+rfind(char *path, char *name, int exec_flag, char *cmd_argv[], int cmd_argc)
+{
+  char buf[512], *p;
+  int fd;
+  struct dirent de;
+  struct stat st;
+
+  if((fd = open(path, 0)) < 0){
+    fprintf(2, "find: cannot open %s\n", path);
+    return;
+  }
+
+  if(fstat(fd, &st) < 0){
+    fprintf(2, "find: cannot stat %s\n", path);
+    close(fd);
+    return;
+  }
+
+  switch(st.type){
+  case T_FILE:
+    if(strcmp(fmtname(path), name) == 0){
+      if(exec_flag){
+        // Build argv for exec
+        char *nargv[MAXARG];
+        int i;
+        for(i = 0; i < cmd_argc; i++)
+          nargv[i] = cmd_argv[i];
+        nargv[i++] = path;
+        nargv[i] = 0;
+
+        if(fork() == 0){
+          exec(nargv[0], nargv);
+          fprintf(2, "exec %s failed\n", nargv[0]);
+          exit(1);
+        } else {
+          wait(0);
+        }
+      } else {
+        printf("%s\n", path);
+      }
+    }
+    break;
+
+  case T_DIR:
+    if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
+      printf("find: path too long\n");
+      break;
+    }
+    strcpy(buf, path);
+    p = buf+strlen(buf);
+    *p++ = '/';
+    while(read(fd, &de, sizeof(de)) == sizeof(de)){
+      if(de.inum == 0)
+        continue;
+      if(strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
+        continue;
+      memmove(p, de.name, DIRSIZ);
+      p[DIRSIZ] = 0;
+      rfind(buf, name, exec_flag, cmd_argv, cmd_argc);
+    }
+    break;
+  }
+  close(fd);
+}
+
+int
+main(int argc, char *argv[])
+{
+  if(argc < 3){
+    fprintf(2, "usage: find <path> <filename> [-exec cmd ...]\n");
+    exit(1);
+  }
+
+  int exec_flag = 0;
+  char *cmd_argv[MAXARG];
+  int cmd_argc = 0;
+
+  if(argc > 3 && strcmp(argv[3], "-exec") == 0){
+    exec_flag = 1;
+    for(int i = 4; i < argc; i++){
+      cmd_argv[cmd_argc++] = argv[i];
+    }
+  }
+
+  rfind(argv[1], argv[2], exec_flag, cmd_argv, cmd_argc);
+  exit(0);
+}
+

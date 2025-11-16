@@ -1,0 +1,8 @@
+1. Could some or all of the code in trampoline.S and kernelvec.S be written in C?
+Only a tiny part could be in C; most must stay in assembly because trap entry occurs before the kernel stack and C runtime are available.
+
+2. Can we eliminate the special TRAPFRAME mapping and store registers on the kernel stack or in proc?
+No; the trapframe is needed to safely store user registers before switching to the kernel page table.
+
+3. Could xv6 eliminate the special TRAMPOLINE page mapping?
+No; the trampoline must exist at an address valid in both user and kernel page tables to safely switch page tables.

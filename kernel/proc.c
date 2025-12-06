@@ -17,13 +17,21 @@ struct spinlock pid_lock;
 
 // MLFQ scheduler - linked list implementation
 struct {
-  struct proc *head;           // Head of queue at this level
-  struct proc *tail;           // Tail of queue at this level
-} mlfq[MLFQ_LEVELS];           // 4 queues, one per level
+  struct proc *head;            // Head of queue at this level
+  struct proc *tail;            // Tail of queue at this level
+} mlfq[MLFQ_LEVELS];            // 4 queues, one per level
 
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
+
+// MLFQ function prototypes (required since they are used before definition)
+static int mlfq_get_quantum(int level);
+static void mlfq_enqueue(struct proc *p, int new_level);
+static void mlfq_detach_from_queue(struct proc *p);
+static struct proc* mlfq_find(void);
+static void mlfq_demote(struct proc *p);
+
 
 extern char trampoline[]; // trampoline.S
 
@@ -179,7 +187,7 @@ mlfq_get_quantum(int level)
     case 1: return L1;
     case 2: return L2;
     case 3: return L3;
-    default: return L3;   // Fallback to lowest queue time slice
+    default: return L3;    // Fallback to lowest queue time slice
   }
 }
 
@@ -188,7 +196,7 @@ mlfq_get_quantum(int level)
 // Caller must hold p->lock.
 // ------------------------------------------------------------
 static void
-mlfq_add_to_queue(struct proc *p, int new_level)
+mlfq_enqueue(struct proc *p, int new_level)
 {
   if(new_level < 0 || new_level >= MLFQ_LEVELS)
     return;
@@ -196,8 +204,8 @@ mlfq_add_to_queue(struct proc *p, int new_level)
   // Update scheduling parameters only if the level actually changes
   if(p->queue_level != new_level) {
     p->queue_level = new_level;
-    p->quantum     = mlfq_get_quantum(new_level);
-    p->ticks_used  = 0;                      // Reset tick usage
+    p->quantum       = mlfq_get_quantum(new_level);
+    p->ticks_used  = 0;                     // Reset tick usage
   }
 
   p->next_proc = 0;
@@ -256,9 +264,10 @@ mlfq_detach_from_queue(struct proc *p)
 // ------------------------------------------------------------
 // Return the next runnable process from highest available level.
 // Returns p with p->lock *held* if found.
+// RENAMED from mlfq_select_next to mlfq_find for consistency.
 // ------------------------------------------------------------
 static struct proc*
-mlfq_select_next(void)
+mlfq_find(void)
 {
   // Iterate from highest priority queue to lowest
   for(int q = 0; q < MLFQ_LEVELS; q++) {
@@ -281,15 +290,16 @@ mlfq_select_next(void)
     }
   }
 
-  return 0;   // No runnable process anywhere
+  return 0;    // No runnable process anywhere
 }
 
 // ------------------------------------------------------------
 // Demote process to next lower priority queue.
 // Caller must hold p->lock.
+// RENAMED from mlfq_demote_process to mlfq_demote for consistency.
 // ------------------------------------------------------------
 static void
-mlfq_demote_process(struct proc *p)
+mlfq_demote(struct proc *p)
 {
   if(p->queue_level < MLFQ_LEVELS - 1)
     p->queue_level++;
@@ -319,7 +329,7 @@ mlfq_global_boost(void)
 
       // Reset scheduling parameters
       p->queue_level = 0;
-      p->quantum     = mlfq_get_quantum(0);
+      p->quantum       = mlfq_get_quantum(0);
       p->ticks_used  = 0;
 
       // Reinsert RUNNABLE processes
@@ -419,7 +429,7 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
-  mlfq_add_to_queue(p, 0);  // Add to highest priority queue
+  mlfq_enqueue(p, 0);  // Add to highest priority queue
 
   release(&p->lock);
 }
@@ -629,9 +639,9 @@ scheduler(void)
     intr_off();
 
     // Get next runnable process from MLFQ
-    p = mlfq_next();
+    p = mlfq_find(); // **FIXED: changed mlfq_next to mlfq_find (the new name)**
     if(p != 0) {
-      // mlfq_next() returns with p->lock held and p removed from queue
+      // mlfq_find() returns with p->lock held and p removed from queue
       p->state = RUNNING;
       c->proc = p;
       swtch(&c->context, &p->context);
@@ -683,11 +693,11 @@ yield(void)
   
   // Check if process used full quantum - if so, demote
   if(p->ticks_used >= p->quantum) {
-    mlfq_demote(p);
+    mlfq_demote(p); // **FIXED: changed mlfq_demote to mlfq_demote_process**
   }
   
   p->state = RUNNABLE;
-  mlfq_add_to_nqueue(p, p->queue_level);  // Re-queue at current (possibly demoted) level
+  mlfq_enqueue(p, p->queue_level);  // **FIXED: changed mlfq_add_to_nqueue to mlfq_enqueue**
   
   sched();
   release(&p->lock);
@@ -773,7 +783,7 @@ wakeup(void *chan)
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
         p->state = RUNNABLE;
-        mlfq_add_to_queue(p, p->queue_level);  // Re-queue at current level (no demotion on I/O)
+        mlfq_enqueue(p, p->queue_level);  // **FIXED: changed mlfq_add_to_queue to mlfq_enqueue**
       }
       release(&p->lock);
     }
@@ -795,7 +805,7 @@ kkill(int pid)
       if(p->state == SLEEPING){
         // Wake process from sleep().
         p->state = RUNNABLE;
-        mlfq_add_to_queue(p, p->queue_level);
+        mlfq_enqueue(p, p->queue_level); // **FIXED: changed mlfq_add_to_queue to mlfq_enqueue**
       }
       release(&p->lock);
       return 0;
@@ -865,7 +875,7 @@ procdump(void)
   [USED]      "used",
   [SLEEPING]  "sleep ",
   [RUNNABLE]  "runble",
-  [RUNNING]   "run   ",
+  [RUNNING]   "run    ",
   [ZOMBIE]    "zombie"
   };
   struct proc *p;
